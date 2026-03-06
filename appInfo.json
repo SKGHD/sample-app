@@ -1,0 +1,7 @@
+{
+  "appName": "sample-app",
+  "ownerTeam": "platform-learning",
+  "contact": "you@example.com",
+  "servicePort": 80,
+  "healthPath": "/"
+}

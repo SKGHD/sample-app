@@ -1,0 +1,13 @@
+{
+  "environments": [
+    {
+      "name": "dev",
+      "namespace": "flux-sample-app-dev",
+      "host": "sample-app.local",
+      "tls": {
+        "enabled": false,
+        "awsCertificateArn": ""
+      }
+    }
+  ]
+}

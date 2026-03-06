@@ -1,0 +1,6 @@
+{
+  "dockerfilePath": "./Dockerfile",
+  "context": ".",
+  "imageName": "sample-app",
+  "tagStrategy": "sha"
+}
