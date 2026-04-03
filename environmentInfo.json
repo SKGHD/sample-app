@@ -2,11 +2,42 @@
   "environments": [
     {
       "name": "dev",
-      "namespace": "flux-sample-app-dev",
-      "host": "sample-app.local",
+      "enabled": true,
+      "namespace": "argo-sample-app-dev",
+      "host": "sample-app-dev.local",
       "tls": {
         "enabled": false,
         "awsCertificateArn": ""
+      }
+    },
+    {
+      "name": "test",
+      "enabled": false,
+      "namespace": "argo-sample-app-test",
+      "host": "sample-app-test.local",
+      "tls": {
+        "enabled": false,
+        "awsCertificateArn": ""
+      }
+    },
+    {
+      "name": "stage",
+      "enabled": false,
+      "namespace": "argo-sample-app-stage",
+      "host": "sample-app-stage.local",
+      "tls": {
+        "enabled": false,
+        "awsCertificateArn": ""
+      }
+    },
+    {
+      "name": "prod",
+      "enabled": false,
+      "namespace": "argo-sample-app-prod",
+      "host": "sample-app.example.com",
+      "tls": {
+        "enabled": true,
+        "awsCertificateArn": "arn:aws:acm:us-east-1:123456789:certificate/xxxxxxxx"
       }
     }
   ]

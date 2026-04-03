@@ -1,0 +1,149 @@
+name: argoplatform-ci
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Action to run"
+        required: true
+        default: "namespace"
+        type: choice
+        options:
+          - namespace
+          - build
+          - deploy
+      environment:
+        description: "Target environment"
+        required: true
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - test
+          - stage
+          - prod
+      image_tag:
+        description: "Image tag to deploy. Leave empty to use build-version.json"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  APP_INFO_PATH: appInfo.json
+  ENV_INFO_PATH: environmentInfo.json
+  BUILD_CONFIG_PATH: build.json
+  BUILD_VERSION_PATH: build-version.json
+
+jobs:
+  preconditions-check:
+    runs-on: ubuntu-latest
+    outputs:
+      app_name: ${{ steps.meta.outputs.app_name }}
+      build_version: ${{ steps.meta.outputs.build_version }}
+      target_environment: ${{ steps.meta.outputs.target_environment }}
+      deploy_image_tag: ${{ steps.meta.outputs.deploy_image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate required files
+        run: |
+          set -euo pipefail
+          for f in "$APP_INFO_PATH" "$ENV_INFO_PATH" "$BUILD_CONFIG_PATH" "$BUILD_VERSION_PATH"; do
+            test -f "$f" || { echo "Missing required file: $f"; exit 1; }
+            jq empty "$f" >/dev/null
+          done
+
+      - name: Resolve metadata
+        id: meta
+        env:
+          INPUT_ENVIRONMENT: ${{ github.event.inputs.environment }}
+          INPUT_IMAGE_TAG: ${{ github.event.inputs.image_tag }}
+          AUTO_DEPLOY_ENV: ${{ vars.AUTO_DEPLOY_ENV }}
+        run: |
+          set -euo pipefail
+          APP_NAME=$(jq -r '.appName' "$APP_INFO_PATH")
+          BUILD_VERSION=$(jq -r '.version' "$BUILD_VERSION_PATH")
+
+          if [[ ! "$BUILD_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "build-version.json version must follow x.y.z"
+            exit 1
+          fi
+
+          TARGET_ENV=""
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            TARGET_ENV="${INPUT_ENVIRONMENT}"
+          elif [[ -n "${AUTO_DEPLOY_ENV:-}" ]]; then
+            TARGET_ENV=$(echo "$AUTO_DEPLOY_ENV" | tr '[:upper:]' '[:lower:]')
+          fi
+
+          if [[ -n "$TARGET_ENV" ]]; then
+            ENABLED=$(jq -r --arg env "$TARGET_ENV" '.environments[] | select(.name == $env) | (.enabled // true)' "$ENV_INFO_PATH" | head -n 1)
+            if [[ -z "$ENABLED" || "$ENABLED" != "true" ]]; then
+              echo "Target environment is missing or disabled: $TARGET_ENV"
+              exit 1
+            fi
+          fi
+
+          DEPLOY_IMAGE_TAG="$BUILD_VERSION"
+          if [[ -n "${INPUT_IMAGE_TAG:-}" ]]; then
+            DEPLOY_IMAGE_TAG="$INPUT_IMAGE_TAG"
+          fi
+
+          echo "app_name=$APP_NAME" >> "$GITHUB_OUTPUT"
+          echo "build_version=$BUILD_VERSION" >> "$GITHUB_OUTPUT"
+          echo "target_environment=$TARGET_ENV" >> "$GITHUB_OUTPUT"
+          echo "deploy_image_tag=$DEPLOY_IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+  namespace:
+    needs: [preconditions-check]
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'namespace') ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[namespace]'))
+    uses: SKGHD/manage-namespace/.github/workflows/manage-namespace.yml@v1
+    with:
+      app_info_path: appInfo.json
+      env_info_path: environmentInfo.json
+      gitops_repo: flux-manifests
+      gitops_branch: main
+      cluster_path: clusters/local-kind
+      environment: ${{ needs.preconditions-check.outputs.target_environment != '' && needs.preconditions-check.outputs.target_environment || 'all' }}
+    secrets:
+      GH_PAT: ${{ secrets.GH_PAT }}
+
+  build-app-image:
+    needs: [preconditions-check]
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'build') ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[build-image]'))
+    uses: SKGHD/build-app-image/.github/workflows/build-app-image.yml@v1
+    with:
+      build_config_path: build.json
+      dockerfile_path: ./Dockerfile
+      context_path: .
+      image_name: ${{ needs.preconditions-check.outputs.app_name }}
+      registry: ghcr.io
+      image_version: ${{ needs.preconditions-check.outputs.build_version }}
+
+  deploy-image:
+    needs: [preconditions-check]
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'deploy') ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[deploy]') && vars.AUTO_DEPLOY_ENV != '')
+    uses: SKGHD/deploy-image/.github/workflows/deploy-image.yml@v1
+    with:
+      app_info_path: appInfo.json
+      env_info_path: environmentInfo.json
+      gitops_repo: flux-manifests
+      gitops_branch: main
+      environment: ${{ needs.preconditions-check.outputs.target_environment }}
+      image_tag: ${{ needs.preconditions-check.outputs.deploy_image_tag }}
+      registry: ghcr.io
+      image_name: ${{ needs.preconditions-check.outputs.app_name }}
+    secrets:
+      GH_PAT: ${{ secrets.GH_PAT }}
